@@ -223,9 +223,131 @@ export function getPluginAuthoringPrompt(capability: ModelCapability, modelName:
 
 export type PluginTemplate = { label: string; script: string };
 
+const zhigeImageScript = `/**
+ * Zhige image generation and reference-image generation via JSON.
+ * @param {string} prompt
+ * @param {string[]} images - reference images as URLs or data URLs
+ * @param {object} params
+ * @param {string} params.size - output size, e.g. "1024x1024"
+ * @param {number} params.count - number of images
+ * @param {string} model
+ * @param {object} http - authenticated HTTP helper
+ * @returns {Promise<string[]>} image URLs or data URLs
+ */
+async function generateZhigeImage({ prompt, images, params: { size, count }, model, http }) {
+  const body = {
+    model,
+    prompt,
+    response_format: "url",
+  };
+  if (size && size !== "auto") body.size = size;
+  if (images.length) body.images = images;
+
+  const results = [];
+  const amount = Math.max(1, Number(count) || 1);
+  for (let index = 0; index < amount; index += 1) {
+    const response = await http.post("/images/generations", body);
+    for (const item of response.data || []) {
+      if (item.b64_json) results.push("data:image/png;base64," + item.b64_json);
+      else if (item.url) results.push(item.url);
+    }
+  }
+  return results;
+}
+
+return await generateZhigeImage({ prompt, images, params, model, http });`;
+
+const zhigeVideoScript = `/**
+ * Zhige async video generation. Creates a task and polls until it completes.
+ * @param {string} prompt
+ * @param {string[]} images - reference images as URLs or data URLs
+ * @param {File[]} videos - unsupported by this API
+ * @param {File[]} audios - reference audio files
+ * @param {object} params
+ * @param {string|number} params.seconds - video duration
+ * @param {string} params.size - output size, e.g. "1280x720"
+ * @param {string} model
+ * @param {object} http - authenticated HTTP helper
+ * @param {function} poll
+ * @returns {Promise<{url: string}>}
+ */
+async function generateZhigeVideo({ prompt, images, videos, audios, params: { seconds, size }, model, http, poll }) {
+  if (videos.length) throw new Error("Zhige video generation does not support reference videos");
+
+  const toDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const body = { model, prompt };
+  if (images.length) body.images = images;
+  if (audios.length) body.audios = await Promise.all(audios.map(toDataUrl));
+  if (Number(seconds) > 0) body.duration = Number(seconds);
+  if (size && size !== "auto") body.size = size;
+
+  const task = await http.post("/videos/generations/async", body);
+  if (!task.task_id) throw new Error("Zhige did not return a video task ID");
+
+  return await poll(
+    () => http.get("/videos/generations/status", { params: { task_id: task.task_id } }),
+    (state) => {
+      if (state.status === "failed") {
+        throw new Error(state.message || (state.error && state.error.message) || "Zhige video generation failed");
+      }
+      if (state.status !== "completed") return null;
+      const item = (state.data || [])[0] || {};
+      const url = item.video || item.url;
+      if (!url) throw new Error("Zhige did not return a video URL");
+      return { url };
+    },
+    { intervalMs: 5000, timeoutMs: 900000 },
+  );
+}
+
+return await generateZhigeVideo({ prompt, images, videos, audios, params, model, http, poll });`;
+
+const zhigeTextScript = `/**
+ * Zhige OpenAI-compatible chat completion.
+ * @param {{role: string, content: string|object[]}[]} messages
+ * @param {string} model
+ * @param {object} http - authenticated HTTP helper
+ * @param {function} onDelta
+ * @returns {Promise<string>}
+ */
+async function generateZhigeText({ messages, model, http, onDelta }) {
+  const response = await http.post("/chat/completions", {
+    model,
+    messages,
+    stream: false,
+  });
+  const text = response.choices?.[0]?.message?.content || "";
+  onDelta(text);
+  return text;
+}
+
+return await generateZhigeText({ messages, model, http, onDelta });`;
+
+export function resolveProviderModelScript(baseUrl: string, capability: ModelCapability) {
+    try {
+        const hostname = new URL(baseUrl).hostname;
+        if (hostname !== "zhigekeji.com" && !hostname.endsWith(".zhigekeji.com")) return undefined;
+    } catch {
+        return undefined;
+    }
+    if (capability === "image") return zhigeImageScript;
+    if (capability === "video") return zhigeVideoScript;
+    if (capability === "text") return zhigeTextScript;
+    return undefined;
+}
+
 export function getPluginTemplates(): Record<ModelCapability, PluginTemplate[]> {
     return {
     image: [
+        {
+            label: i18n.t("modelPlugin.templates.zhigekeji"),
+            script: zhigeImageScript,
+        },
         {
             label: i18n.t("modelPlugin.templates.openai"),
             script: `/**
@@ -435,6 +557,10 @@ return await generateImage({
         },
     ],
     video: [
+        {
+            label: i18n.t("modelPlugin.templates.zhigekeji"),
+            script: zhigeVideoScript,
+        },
         {
             label: i18n.t("modelPlugin.templates.openai"),
             script: `/**
@@ -846,6 +972,10 @@ return await generateAudio({
         },
     ],
     text: [
+        {
+            label: i18n.t("modelPlugin.templates.zhigekeji"),
+            script: zhigeTextScript,
+        },
         {
             label: i18n.t("modelPlugin.templates.openai"),
             script: `/**

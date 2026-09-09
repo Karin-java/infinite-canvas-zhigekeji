@@ -1,8 +1,8 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
-import { normalizePluginImages, runModelPlugin } from "./model-plugin";
+import { buildApiUrl, guessCapability, normalizeChannelModels, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { normalizePluginImages, resolveProviderModelScript, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
@@ -882,20 +882,28 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
             validateGeminiPayload(response.data);
-            return (response.data.models || [])
-                .map((model) => model.name?.replace(/^models\//, ""))
-                .filter((id): id is string => Boolean(id))
-                .sort((a, b) => a.localeCompare(b));
+            return normalizeChannelModels(
+                (response.data.models || [])
+                    .map((model) => model.name?.replace(/^models\//, ""))
+                    .filter((id): id is string => Boolean(id))
+                    .map((name) => ({ name, capability: guessCapability(name) })),
+            ).sort((a, b) => a.name.localeCompare(b.name));
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+        const response = await axios.get<{ data?: Array<{ id?: string; name?: string; type?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
             headers: {
                 Authorization: `Bearer ${config.apiKey}`,
             },
         });
-        return (response.data.data || [])
-            .map((model) => model.id)
-            .filter((id): id is string => Boolean(id))
-            .sort((a, b) => a.localeCompare(b));
+        return normalizeChannelModels(
+            (response.data.data || [])
+                .map((item): ChannelModel | null => {
+                    const name = (item.id || item.name || "").trim();
+                    if (!name) return null;
+                    const capability = (["image", "video", "text", "audio"] as ModelCapability[]).includes(item.type as ModelCapability) ? (item.type as ModelCapability) : guessCapability(name);
+                    return { name, capability, script: resolveProviderModelScript(config.baseUrl, capability) };
+                })
+                .filter((model): model is ChannelModel => Boolean(model)),
+        ).sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("modelReadFailed")));
     }
