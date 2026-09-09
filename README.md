@@ -111,8 +111,8 @@ AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器�
 ### 本地开发
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
+git clone https://github.com/Karin-java/infinite-canvas-zhigekeji.git
+cd infinite-canvas-zhigekeji
 cd web
 bun install
 bun run dev
@@ -121,8 +121,8 @@ bun run dev
 ### Docker 运行
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
+git clone https://github.com/Karin-java/infinite-canvas-zhigekeji.git
+cd infinite-canvas-zhigekeji
 docker compose up -d
 ```
 
