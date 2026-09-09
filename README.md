@@ -108,6 +108,13 @@
 
 AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
 
+### 双击启动（推荐）
+
+- Windows：双击根目录的 `start-windows.bat`。
+- macOS：双击根目录的 `start-macos.command`。
+
+启动器会在缺少 Bun 时自动安装，并在首次运行时安装项目依赖，然后打开 `http://localhost:3000`。启动期间请保留终端窗口；关闭窗口或按 `Ctrl+C` 即可停止。首次运行需要联网，且 3000 端口必须空闲。
+
 ### 本地开发
 
 ```bash
